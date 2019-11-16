@@ -135,24 +135,24 @@ sys_halt(void)
 int
 sys_kthread_create(void)
 {
-  void *func;
-  void *arg;
-  void *tstack;
+  void(*fcn)(void*);
+	void *arg;
+	void *tstack;
+
+	if(argptr(0, (void*)&fcn, sizeof(fcn) < 0))
+		return -1;
+
+	if(argptr(1, (void*)&arg, sizeof(arg) < 0))
+			return -1;
+
+	if(argptr(2, (void*)&tstack, sizeof(tstack) < 0))
+			return -1;
 
   // argptr(int n, char **pp, int size)
   // if ((argptr(0, (void*)&buf, sizeof(*buf)) < 0) || (argint(1, (int*)&size) < 0))
   // kthread_create(void (*func)(void*), void *arg_ptr, void *tstack)
-  
-  if (
-      (argptr(0, (void*)&func, sizeof(*func)) < 0) ||
-      (argptr(1, (void*)&arg, sizeof(*arg)) < 0) ||
-      (argptr(2, (void*)&tstack, sizeof(*tstack)))
-  )
-  {
-    return -1;
-  }
 
-  return kthread_create(func, arg, tstack);
+  return kthread_create(fcn, arg, tstack);
 
 }
 

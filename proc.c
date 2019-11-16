@@ -90,6 +90,10 @@ allocproc(void)
   return 0;
 
 found:
+  if (debugState) {
+      cprintf("=== %s %s %d: found UNUSED process\n"
+              , __FILE__, __FUNCTION__, __LINE__);
+  }
   p->state = EMBRYO;
   p->pid = nextpid++;
 
@@ -117,8 +121,8 @@ found:
   p->context->eip = (uint)forkret;
 
 #ifdef KTHREADS
-  p->isThread = 0;
-  p->isParent = 0;
+  p->isThread = FALSE;
+  p->isParent = FALSE;
   p->threadCount = 0;
   p->tid = 0;
   p->nextTid = 1;
@@ -199,37 +203,49 @@ kthread_create(void (*func)(void*), void *arg_ptr, void *tstack)
 
   // check if tstack is page aligned
   if (debugState) {
-      cprintf("%s %s %d: page offset: %u\n"
+      cprintf("=== %s %s %d: page offset: %u\n"
               , __FILE__, __FUNCTION__, __LINE__
               , ((ulong) tstack) % PGSIZE);
   }
   
-  if(!(((ulong) tstack) % PGSIZE)) return -1;
+  if( ((ulong) tstack % PGSIZE) != 0 ){ 
+    return -1;
+  }
   
   // Allocate process.
   if((np = allocproc()) == 0){
+    if (debugState) {
+      cprintf("=== %s %s %d: allocproc failed\n"
+              , __FILE__, __FUNCTION__, __LINE__);
+  }
     return -1;
+  }
+
+  if (debugState) {
+      cprintf("=== %s %s %d: allocated new proc: %d\n"
+              , __FILE__, __FUNCTION__, __LINE__
+              , np->pid);
   }
 
   // The new process is a thread, so it shares a page dir table.
   np->pgdir = curproc->pgdir;
   np->sz = curproc->sz;
-  np->isThread = 1;
+  np->isThread = TRUE;
   // The curproc could be a thread
-  if(curproc->isThread){
-    np->parent = curproc->parent;
-  }
-  else{
+  // if(curproc->isThread){
+  //   np->parent = curproc->parent;
+  // }
+  // else{
     np->parent = curproc;
-  }
-  (np->parent)->isParent= 1;
+  // }
+  (np->parent)->isParent = TRUE;
   (np->parent)->threadCount++;
   tid = (np->parent)->nextTid++;
   *np->tf = *curproc->tf;
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
-  np->tf->eip = *((int*)func);
+  np->tf->eip = (int)func;
   np->tf->esp = (int)tstack + PGSIZE;
   np->tf->esp -= sizeof(int);
   *((int*)np->tf->esp) = (int) arg_ptr;
@@ -249,7 +265,13 @@ kthread_create(void (*func)(void*), void *arg_ptr, void *tstack)
 
   np->state = RUNNABLE;
 
-  release(&ptable.lock);  
+  release(&ptable.lock);
+  
+  if (debugState) {
+      cprintf("=== %s %s %d: returning thread tid: %d\n"
+              , __FILE__, __FUNCTION__, __LINE__
+              , tid);
+  }
 
   return tid;
 }
@@ -265,22 +287,35 @@ kthread_join(int tid)
   if(curproc->isParent && curproc->threadCount == 0){
     return -1;
   }
-  if(curproc->tid == 0){
+  if(tid == 0){
     return -1;
   }
-  if(curproc->isThread){
-    curproc = curproc->parent;
+  // if(curproc->isThread){
+  //   curproc = curproc->parent;
+  // }
+
+  if (debugState) {
+      cprintf("=== %s %s %d: acquiring ptable lock\n"
+              , __FILE__, __FUNCTION__, __LINE__);
   }
 
   acquire(&ptable.lock);
   for(;;){
     // Scan through table looking for exited children.
     foundThread = 0;
+    if(debugState){
+      cprintf("=== curproc: %p\n"
+              , curproc);
+    }
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(debugState){
+        cprintf("=== p->parent: %p, p->tid: %d\n"
+                , p->parent, p->tid);
+      }
       if(p->parent != curproc || p->tid != tid)
         continue;
       
-      foundThread = 1;
+      foundThread = TRUE;
       while (p->state != ZOMBIE) {
         release(&ptable.lock);
         yield(); 
@@ -288,22 +323,25 @@ kthread_join(int tid)
       }
 
       kfree(p->kstack);
-      p->kstack = 0;
+      p->kstack = NULL;
       p->pid = 0;
-      p->parent = 0;
       p->name[0] = 0;
       p->killed = 0;
-            
-      break;
+      p->parent = NULL;
     }
     break;
   }
     // if never found the joinable thread in the ptable 
     if(!foundThread){
+      if (debugState) {
+        cprintf("=== %s %s %d: Thread %d not found\n"
+              , __FILE__, __FUNCTION__, __LINE__, tid);
+      }
       release(&ptable.lock);
       return -1;
     }
-    return tid;
+    release(&ptable.lock);
+    return 0;
 }
 
 void
@@ -316,25 +354,32 @@ kthread_exit(int exitValue)
   if(curproc == initproc)
     panic("init exiting");
 
+
   // if the curproc is a thread, then Close all open files.
   if(curproc->isThread){
+    if (debugState) {
+      cprintf("=== %s %s %d: curproc is thread\n"
+              , __FILE__, __FUNCTION__, __LINE__);
+    }
     for(fd = 0; fd < NOFILE; fd++){
       if(curproc->ofile[fd]){
-        fileclose(curproc->ofile[fd]);
-        curproc->ofile[fd] = 0;
-     }
+          fileclose(curproc->ofile[fd]);
+          curproc->ofile[fd] = 0;
+      }
     }
+    
+    begin_op();
+    iput(curproc->cwd);
+    end_op();
+    
+    curproc->cwd = 0;
+    curproc->killed = FALSE;
+    curproc->threadExitvalue = exitValue;
+    // curproc->oncpu = -1;
+    curproc->state = ZOMBIE;
   }
 
-  begin_op();
-  iput(curproc->cwd);
-  end_op();
-  curproc->cwd = 0;
-
-  // acquire(&ptable.lock);
-
-  // // Parent might be sleeping in wait().
-  // wakeup1(curproc->parent);
+  acquire(&ptable.lock);
 
   // // Pass abandoned children to init.
   // for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
@@ -346,11 +391,7 @@ kthread_exit(int exitValue)
   // }
 
   // Jump into the scheduler, never to return.
-  curproc->killed = FALSE;
-  curproc->threadExitvalue = exitValue;
-  curproc->oncpu = -1;
-  curproc->state = ZOMBIE;
-  acquire(&ptable.lock);
+
   sched();
   panic("zombie exit");
 }
