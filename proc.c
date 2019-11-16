@@ -188,18 +188,18 @@ growproc(int n)
   return 0;
 }
 
-// #ifdef KTHREADS
+#ifdef KTHREADS
 // # error You need to fill in the following functions
 int
 kthread_create(void (*func)(void*), void *arg_ptr, void *tstack)
 {
-  int i, pid, tid;
+  int i, tid;
   struct proc *np;
   struct proc *curproc = myproc();
 
   // check if tstack is page aligned
   if (debugState) {
-      cprintf("%s %s %d: page offset: %u\n",
+      cprintf("%s %s %d: page offset: %u\n"
               , __FILE__, __FUNCTION__, __LINE__
               , ((ulong) tstack) % PGSIZE);
   }
@@ -229,7 +229,7 @@ kthread_create(void (*func)(void*), void *arg_ptr, void *tstack)
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
-  np->tf->eip = func;
+  np->tf->eip = *((int*)func);
   np->tf->esp = (int)tstack + PGSIZE;
   np->tf->esp -= sizeof(int);
   *((int*)np->tf->esp) = (int) arg_ptr;
@@ -245,8 +245,6 @@ kthread_create(void (*func)(void*), void *arg_ptr, void *tstack)
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
-  pid = np->pid;
-
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
@@ -261,7 +259,7 @@ int
 kthread_join(int tid)
 {
   struct proc *p;
-  int foundThread, havekids, pid;
+  int foundThread;
   struct proc *curproc = myproc();
   
   if(curproc->isParent && curproc->threadCount == 0){
@@ -278,7 +276,6 @@ kthread_join(int tid)
   for(;;){
     // Scan through table looking for exited children.
     foundThread = 0;
-    havekids = 0;
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->parent != curproc || p->tid != tid)
         continue;
@@ -313,7 +310,7 @@ void
 kthread_exit(int exitValue)
 {
   struct proc *curproc = myproc();
-  struct proc *p;
+  // struct proc *p;
   int fd;
 
   if(curproc == initproc)
@@ -350,7 +347,7 @@ kthread_exit(int exitValue)
 
   // Jump into the scheduler, never to return.
   curproc->killed = FALSE;
-  curproc->threadExitValue = exitValue;
+  curproc->threadExitvalue = exitValue;
   curproc->oncpu = -1;
   curproc->state = ZOMBIE;
   acquire(&ptable.lock);
@@ -537,7 +534,7 @@ scheduler(void)
         continue;
 
 #ifdef KTHREADS
-# error You need to have this data member in the proc struct
+// # error You need to have this data member in the proc struct
       p->oncpu = current_cpu;
 #endif // KTHREADS
 
@@ -723,10 +720,13 @@ sys_cps(void)
 
     acquire(&ptable.lock);
     cprintf(
-        "pid\tppid\tname\tstate\tsize\tcpu\tisPar\tisThrd\tthrdCnt"
+        "pid\tppid\tname\tstate\tsize"
         );
 #ifdef KTHREADS
-# error You need to add header info for the thread data
+    cprintf(
+        "pid\tppid\tname\tstate\tsize\tcpu\tisPar\tisThrd\tthrdCnt"
+        );
+// # error You need to add header info for the thread data
 #endif // KTHREADS
     cprintf("\n");
     for (i = 0; i < NPROC; i++) {
@@ -738,18 +738,20 @@ sys_cps(void)
             else {
                 state = "uknown";
             }
-            cprintf("%d\t%d\t%s\t%s\t%u\t%d\t%u\t%u\t%u"
+            cprintf("%d\t%d\t%s\t%s\t%u"
                     , ptable.proc[i].pid
                     , ptable.proc[i].parent ? ptable.proc[i].parent->pid : 1
                     , ptable.proc[i].name, state
                     , ptable.proc[i].sz
+            );
+#ifdef KTHREADS
+            cprintf("\t%d\t%u\t%u\t%u"
                     , ptable.proc[i].oncpu
                     , ptable.proc[i].isParent
                     , ptable.proc[i].isThread
                     , ptable.proc[i].threadCount
-                );
-#ifdef KTHREADS
-# error You need to add the thread data: oncpu, isParent, isThread, threadCount
+            );
+// # error You need to add the thread data: oncpu, isParent, isThread, threadCount
 #endif // KTHREADS
             cprintf("\n");
         }

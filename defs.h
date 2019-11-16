@@ -124,7 +124,7 @@ int             wait(void);
 void            wakeup(void*);
 void            yield(void);
 #ifdef KTHREADS
-int				kthread_create(void *(*start_routine) (void *), void *, void*);
+int				kthread_create(void (*)(void*), void *, void *);
 int				kthread_join(int);
 void 			kthread_exit(int);			
 // # error You need to have function prototypes for the kthread_ fucntions here
