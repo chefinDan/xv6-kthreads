@@ -117,7 +117,13 @@ found:
   p->context->eip = (uint)forkret;
 
 #ifdef KTHREADS
-# error You need to initialize new proc data memebers
+  p->isThread = 0;
+  p->isParent = 0;
+  p->threadCount = 0;
+  p->tid = 0;
+  p->nextTid = 1;
+  p->threadExitvalue = 0;
+// # error You need to initialize new proc data members
 #endif // KTHREADS
 
   return p;
@@ -191,7 +197,6 @@ kthread_create(void (*func)(void*), void *arg_ptr, void *tstack)
   struct proc *np;
   struct proc *curproc = myproc();
 
-
   // check if tstack is page aligned
   if (debugState) {
       cprintf("%s %s %d: page offset: %u\n",
@@ -255,15 +260,102 @@ kthread_create(void (*func)(void*), void *arg_ptr, void *tstack)
 int
 kthread_join(int tid)
 {
-    int retValue = -1;
+  struct proc *p;
+  int foundThread, havekids, pid;
+  struct proc *curproc = myproc();
+  
+  if(curproc->isParent && curproc->threadCount == 0){
+    return -1;
+  }
+  if(curproc->tid == 0){
+    return -1;
+  }
+  if(curproc->isThread){
+    curproc = curproc->parent;
+  }
 
-    return retValue;
+  acquire(&ptable.lock);
+  for(;;){
+    // Scan through table looking for exited children.
+    foundThread = 0;
+    havekids = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->parent != curproc || p->tid != tid)
+        continue;
+      
+      foundThread = 1;
+      while (p->state != ZOMBIE) {
+        release(&ptable.lock);
+        yield(); 
+        acquire(&ptable.lock);
+      }
+
+      kfree(p->kstack);
+      p->kstack = 0;
+      p->pid = 0;
+      p->parent = 0;
+      p->name[0] = 0;
+      p->killed = 0;
+            
+      break;
+    }
+    break;
+  }
+    // if never found the joinable thread in the ptable 
+    if(!foundThread){
+      release(&ptable.lock);
+      return -1;
+    }
+    return tid;
 }
 
 void
 kthread_exit(int exitValue)
 {
-    return;
+  struct proc *curproc = myproc();
+  struct proc *p;
+  int fd;
+
+  if(curproc == initproc)
+    panic("init exiting");
+
+  // if the curproc is a thread, then Close all open files.
+  if(curproc->isThread){
+    for(fd = 0; fd < NOFILE; fd++){
+      if(curproc->ofile[fd]){
+        fileclose(curproc->ofile[fd]);
+        curproc->ofile[fd] = 0;
+     }
+    }
+  }
+
+  begin_op();
+  iput(curproc->cwd);
+  end_op();
+  curproc->cwd = 0;
+
+  // acquire(&ptable.lock);
+
+  // // Parent might be sleeping in wait().
+  // wakeup1(curproc->parent);
+
+  // // Pass abandoned children to init.
+  // for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+  //   if(p->parent == curproc){
+  //     p->parent = initproc;
+  //     if(p->state == ZOMBIE)
+  //       wakeup1(initproc);
+  //   }
+  // }
+
+  // Jump into the scheduler, never to return.
+  curproc->killed = FALSE;
+  curproc->threadExitValue = exitValue;
+  curproc->oncpu = -1;
+  curproc->state = ZOMBIE;
+  acquire(&ptable.lock);
+  sched();
+  panic("zombie exit");
 }
 
 #endif // KTHREADS
@@ -382,11 +474,7 @@ wait(void)
     havekids = 0;
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
 #ifdef KTHREADS
-# error You will need to change how wait() kills off processes marked as zombie
-# error you do not want the kernel deallocating memory for a thread.
-# error you need to take care of that in kthread_join and benny_thread_exit
-# error kthread_join will call kfree() and benny_thread_exit will call free
-# error    on the memory allocated for the thread stack
+      if(p->parent != curproc || p->isThread == TRUE)
 #else // KTHREADS
       if(p->parent != curproc)
 #endif // KTHREADS
@@ -635,7 +723,7 @@ sys_cps(void)
 
     acquire(&ptable.lock);
     cprintf(
-        "pid\tppid\tname\tstate\tsize"
+        "pid\tppid\tname\tstate\tsize\tcpu\tisPar\tisThrd\tthrdCnt"
         );
 #ifdef KTHREADS
 # error You need to add header info for the thread data
@@ -650,11 +738,15 @@ sys_cps(void)
             else {
                 state = "uknown";
             }
-            cprintf("%d\t%d\t%s\t%s\t%u"
+            cprintf("%d\t%d\t%s\t%s\t%u\t%d\t%u\t%u\t%u"
                     , ptable.proc[i].pid
                     , ptable.proc[i].parent ? ptable.proc[i].parent->pid : 1
                     , ptable.proc[i].name, state
                     , ptable.proc[i].sz
+                    , ptable.proc[i].oncpu
+                    , ptable.proc[i].isParent
+                    , ptable.proc[i].isThread
+                    , ptable.proc[i].threadCount
                 );
 #ifdef KTHREADS
 # error You need to add the thread data: oncpu, isParent, isThread, threadCount
