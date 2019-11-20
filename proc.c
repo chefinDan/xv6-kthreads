@@ -308,10 +308,10 @@ kthread_join(int tid)
               , curproc);
     }
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(debugState){
-        cprintf("=== p->parent: %p, p->tid: %d\n"
-                , p->parent, p->tid);
-      }
+      //if(debugState){
+      //  cprintf("=== p->parent: %p, p->tid: %d\n"
+      //          , p->parent, p->tid);
+      //}
       if(p->parent != curproc || p->tid != tid)
         continue;
       
